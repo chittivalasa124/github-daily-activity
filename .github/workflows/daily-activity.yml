@@ -1,0 +1,76 @@
+name: Daily Repository Maintenance
+
+on:
+  schedule:
+    # 6:00 PM IST = 12:30 PM UTC
+    - cron: "30 12 * * *"
+    # 6:10 PM IST = 12:40 PM UTC
+    - cron: "40 12 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Select maintenance task"
+        required: true
+        type: choice
+        options:
+          - inventory
+          - quality
+        default: inventory
+
+permissions:
+  contents: write
+
+jobs:
+  daily-maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Select maintenance task
+        id: task
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "mode=$MANUAL_MODE" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "30 12 * * *" ]; then
+            echo "mode=inventory" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=quality" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate maintenance report
+        run: |
+          python scripts/daily_update.py "${{ steps.task.outputs.mode }}"
+
+      - name: Configure Git identity
+        env:
+          COMMIT_NAME: ${{ secrets.COMMIT_NAME }}
+          COMMIT_EMAIL: ${{ secrets.COMMIT_EMAIL }}
+        run: |
+          if [ -z "$COMMIT_NAME" ] || [ -z "$COMMIT_EMAIL" ]; then
+            echo "Missing COMMIT_NAME or COMMIT_EMAIL repository secret."
+            exit 1
+          fi
+
+          git config user.name "$COMMIT_NAME"
+          git config user.email "$COMMIT_EMAIL"
+
+      - name: Commit and push report if changed
+        run: |
+          git add reports/
+          if git diff --cached --quiet; then
+            echo "No report changes to commit."
+          else
+            git commit -m "chore: update daily maintenance reports"
+            git push
+          fi
