@@ -2,20 +2,35 @@ name: Daily Repository Maintenance
 
 on:
   schedule:
-    # 6:00 PM IST = 12:30 PM UTC
+    # 10:00 AM IST = 04:30 UTC (Morning Slot)
+    - cron: "30 4 * * *"
+    # 02:00 PM IST = 08:30 UTC (Afternoon Slot)
+    - cron: "30 8 * * *"
+    # 06:00 PM IST = 12:30 UTC (Evening Slot)
     - cron: "30 12 * * *"
-    # 6:10 PM IST = 12:40 PM UTC
-    - cron: "40 12 * * *"
+    # 09:30 PM IST = 16:00 UTC (Night Slot)
+    - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "Select maintenance task"
+        description: "Select maintenance task or commit target"
         required: true
         type: choice
         options:
-          - inventory
-          - quality
-        default: inventory
+          - "auto (4-8 commits distributed)"
+          - "batch-fill (reach today's 4-8 target immediately)"
+          - "4-commits"
+          - "6-commits"
+          - "8-commits"
+          - "inventory"
+          - "quality"
+          - "metrics"
+          - "health"
+          - "security"
+          - "audit"
+          - "system"
+          - "summary"
+        default: "auto (4-8 commits distributed)"
 
 permissions:
   contents: write
@@ -26,31 +41,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
-      - name: Select maintenance task
-        id: task
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          SCHEDULE: ${{ github.event.schedule }}
-          MANUAL_MODE: ${{ inputs.mode }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "mode=$MANUAL_MODE" >> "$GITHUB_OUTPUT"
-          elif [ "$SCHEDULE" = "30 12 * * *" ]; then
-            echo "mode=inventory" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=quality" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Generate maintenance report
-        run: |
-          python scripts/daily_update.py "${{ steps.task.outputs.mode }}"
 
       - name: Configure Git identity
         env:
@@ -65,12 +62,13 @@ jobs:
           git config user.name "$COMMIT_NAME"
           git config user.email "$COMMIT_EMAIL"
 
-      - name: Commit and push report if changed
+      - name: Run daily maintenance automation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_MODE: ${{ inputs.mode }}
         run: |
-          git add reports/
-          if git diff --cached --quiet; then
-            echo "No report changes to commit."
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            python scripts/daily_update.py "$MANUAL_MODE"
           else
-            git commit -m "chore: update daily maintenance reports"
-            git push
+            python scripts/daily_update.py "auto"
           fi
